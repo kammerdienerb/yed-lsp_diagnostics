@@ -17,7 +17,6 @@ struct Diagnostic {
     int    byte_start;
     int    byte_end;
     int    severity;
-    bool   invalid_range;
 };
 
 
@@ -133,8 +132,6 @@ static void pmsg(yed_event *event) {
                 d.severity = 1;
             }
 
-            d.invalid_range = false;
-
             diagnostics[path].push_back(std::move(d));
         }
 
@@ -205,7 +202,7 @@ static void linedraw(yed_event *event) {
     attrs.flags |= ATTR_UNDERLINE;
 
     for (const auto &diag : buff_diags) {
-        if (event->row == diag.line && !diag.invalid_range) {
+        if (event->row == diag.line) {
             yed_line *line = yed_buff_get_line(event->frame->buffer, event->row);
             if (line == NULL) { continue; }
 
@@ -349,12 +346,12 @@ static void mod(yed_event *event) {
             break;
 
         case BUFF_MOD_DELETE_LINE: {
-again:;
+again_line:;
             size_t idx = 0;
             for (auto &diag : buff_diags) {
                 if (event->row == diag.line) {
                     buff_diags.erase(buff_diags.begin() + idx);
-                    goto again;
+                    goto again_line;
                 } else if (event->row < diag.line) {
                     diag.line -= 1;
                 }
@@ -369,14 +366,39 @@ again:;
             update_buffer();
             break;
 
-        default:
+        default: {
+            bool did_change = false;
+again_range:;
+            size_t idx = 0;
             for (auto &diag : buff_diags) {
                 if (event->row == diag.line) {
-                    diag.invalid_range = true;
-                }
-            }
+                    yed_line *line = yed_buff_get_line(event->buffer, event->row);
+                    if (line == NULL) { continue; }
 
+                    int start_col = yed_line_idx_to_col(line, diag.byte_start);
+                    int end_col   = yed_line_idx_to_col(line, diag.byte_end);
+
+                    if (event->buff_mod_event == BUFF_MOD_INSERT_INTO_LINE && event->col <= start_col) {
+                        diag.byte_start += 1; /* @bad: this is not strictly correct (multi-byte glyph insertions) */
+                        diag.byte_end   += 1;
+                        did_change = true;
+                    } else if (event->buff_mod_event == BUFF_MOD_DELETE_FROM_LINE && event->col < start_col) {
+                        diag.byte_start -= 1; /* @bad: this is not strictly correct (multi-byte glyph deletions) */
+                        diag.byte_end   -= 1;
+                        did_change = true;
+                    } else if (event->col >= start_col && event->col <= end_col) {
+                        buff_diags.erase(buff_diags.begin() + idx);
+                        did_change = true;
+                        goto again_range;
+                    }
+                }
+                idx += 1;
+            }
+            if (did_change) {
+                update_buffer();
+            }
             break;
+        }
     }
 }
 
