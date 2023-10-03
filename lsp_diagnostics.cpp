@@ -126,8 +126,8 @@ static void pmsg(yed_event *event) {
 
             d.line += 1;
 
-            if (diag["range"].contains("severity")) {
-                d.severity = diag["range"]["severity"];
+            if (diag.contains("severity")) {
+                d.severity = diag["severity"];
             } else {
                 d.severity = 1;
             }
@@ -258,15 +258,36 @@ static void update(yed_event *event) {
                 yed_line *line = yed_buff_get_line(event->frame->buffer, row);
                 if (line == NULL) { continue; }
 
+                int start_col = yed_line_idx_to_col(line, diag.byte_start);
+                int end_col   = diag.byte_end < 0 ? line->visual_width : yed_line_idx_to_col(line, diag.byte_end);
+
+                if (start_col > line->visual_width) {
+                    int r = event->frame->left + line->visual_width - event->frame->buffer_x_offset;
+                    if (r <= event->frame->left + event->frame->width - 1) {
+                        yed_set_cursor(event->frame->top + i - 1, r);
+                        yed_attrs attrs = get_err_attrs();
+                        yed_combine_attrs(&b_attrs, &attrs);
+                        attrs.flags |= ATTR_UNDERLINE;
+                        yed_set_attr(attrs);
+                        yed_screen_print_n(" ", 1);
+                    }
+                }
+
                 if (when_cursor) {
                     if (diag.byte_start) {
-                        int start_col = yed_line_idx_to_col(line, diag.byte_start);
-                        int end_col   = diag.byte_end < 0 ? line->visual_width : yed_line_idx_to_col(line, diag.byte_end);
-                        if (event->frame->cursor_col < start_col || event->frame->cursor_col > end_col) {
-                            continue;
+                        if (start_col <= line->visual_width) {
+                            if (event->frame->cursor_col < start_col || event->frame->cursor_col > end_col) {
+                                continue;
+                            }
+                        } else {
+                            if (event->frame->cursor_col <= line->visual_width) {
+                                continue;
+                            }
                         }
                     }
                 }
+
+                yed_attrs attrs = get_err_attrs();
 
                 string chopped = " ● ";
 
@@ -281,8 +302,6 @@ static void update(yed_event *event) {
                     } while (chopped.size() && yed_get_string_width(chopped.c_str()) > space_avail);
                     chopped += "...";
                 }
-
-                yed_attrs attrs = get_err_attrs();
 
                 yed_set_attr(attrs);
 
